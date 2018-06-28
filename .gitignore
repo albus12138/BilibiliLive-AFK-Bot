@@ -62,3 +62,7 @@ target/
 
 # Virtualenv
 venv/
+
+# Debug files
+test.py
+.captcha.*
