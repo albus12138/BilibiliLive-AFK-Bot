@@ -66,3 +66,7 @@ venv/
 # Debug files
 test.py
 .captcha.*
+my_model/
+tmp/
+train_data/
+.tmp.bmp
