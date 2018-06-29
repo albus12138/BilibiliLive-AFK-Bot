@@ -8,7 +8,8 @@ from skimage import morphology, filters
 
 urls = {
     "LiveIndex": "https://live.bilibili.com",
-    "Captcha": "https://api.live.bilibili.com/lottery/v1/SilverBox/getCaptcha"
+    "Captcha": "https://api.live.bilibili.com/lottery/v1/SilverBox/getCaptcha",
+    "Sign": "https://api.live.bilibili.com/sign/doSign"
 }
 
 
@@ -69,3 +70,12 @@ class Bilibili:
         dst = morphology.remove_small_objects(bw, min_size=20, connectivity=1)
         img = Image.fromarray(np.uint8(dst)*255, "L")
         img.save(".tmp.bmp")
+
+    def sign(self):
+        req = self._session.get(urls["Sign"])
+        data = req.json()
+        if data["msg"] == "OK":
+            print(data["data"]["text"])
+            return 1
+        print(data)
+        return 0
