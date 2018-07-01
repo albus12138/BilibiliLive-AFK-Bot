@@ -1,0 +1,6 @@
+model_checkpoint_path: "bilibili_captcha.model-199"
+all_model_checkpoint_paths: "bilibili_captcha.model-195"
+all_model_checkpoint_paths: "bilibili_captcha.model-196"
+all_model_checkpoint_paths: "bilibili_captcha.model-197"
+all_model_checkpoint_paths: "bilibili_captcha.model-198"
+all_model_checkpoint_paths: "bilibili_captcha.model-199"
