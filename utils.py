@@ -1,15 +1,19 @@
 import re
 import base64
 import requests
+import time
+import random
 import numpy as np
 from PIL import Image
 from skimage import morphology, filters
+from tf_train import ocr_cnn
 
 
 urls = {
     "LiveIndex": "https://live.bilibili.com",
     "Captcha": "https://api.live.bilibili.com/lottery/v1/SilverBox/getCaptcha",
-    "Sign": "https://api.live.bilibili.com/sign/doSign"
+    "Sign": "https://api.live.bilibili.com/sign/doSign",
+    "getCurrentTask": "https://api.live.bilibili.com/lottery/v1/SilverBox/getCurrentTask"
 }
 
 
@@ -37,6 +41,8 @@ class Bilibili:
         return 1
 
     def _ocr(self):
+        if not self._get_captcha():
+            return 0
         rfile = Image.open(".captcha.jpeg", "r")
         img = rfile.convert("L")
         x, y = img.size
@@ -70,10 +76,11 @@ class Bilibili:
         dst = morphology.remove_small_objects(bw, min_size=20, connectivity=1)
         img = Image.fromarray(np.uint8(dst)*255, "L")
         img.save(".tmp.bmp")
+        return ocr_cnn()
 
     def sign(self):
-        req = self._session.get(urls["Sign"])
-        data = req.json()
+        res = self._session.get(urls["Sign"])
+        data = res.json()
         if data["msg"] == "OK":
             print(data["data"]["text"])
             return 1

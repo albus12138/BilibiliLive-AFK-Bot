@@ -8,7 +8,7 @@ import requests
 import numpy as np
 import tensorflow as tf
 from skimage import io
-from utils import Bilibili
+
 
 
 HEIGHT = 40
@@ -16,6 +16,9 @@ WIDTH = 120
 CAPTCHA_LENGTH = 4
 FILENAME_DICT = string.ascii_letters+string.digits
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '2'
+X = tf.placeholder(tf.float32, [None, HEIGHT * WIDTH])
+Y = tf.placeholder(tf.float32, [None, 48])
+keep_prob = tf.placeholder(tf.float32)
 
 
 def __gen_random_name():
@@ -230,7 +233,38 @@ def test_cnn_accuracy():
         print(step, acc)
 
 
+def ocr_cnn():
+    captcha_image = io.imread(".tmp.bmp", as_grey=True).flatten()
+    output = crack_captcha_cnn()
+
+    saver = tf.train.Saver()
+    with tf.Session() as sess:
+        if os.path.exists("my_model/checkpoint"):
+            checkpoint = open("my_model/checkpoint", "r")
+            record = checkpoint.readline()
+            saver.restore(sess, "my_model/{}".format(record.split("\"")[1]))
+            step = int(record.split("\"")[1].split("-")[-1])
+            checkpoint.close()
+            print("Successful load checkpoint {}".format(step))
+        else:
+            print("Checkpoint not found.")
+            return 0
+
+
+        predict = tf.argmax(tf.reshape(output, [-1, 4, 12]), 2)
+        text_list = sess.run(predict, feed_dict={X: [captcha_image], keep_prob: 1})
+
+        text = text_list[0].tolist()
+        vector = np.zeros(4 * 12)
+        i = 0
+        for n in text:
+            vector[i * 12 + n] = 1
+            i += 1
+        return vector2text(vector)
+
+
 if __name__ == "__main__":
+    from utils import Bilibili
     mode = 2
     if mode == 0:
         cookies = {}  # bilibili cookies, key: value
@@ -240,14 +274,10 @@ if __name__ == "__main__":
         host = 'https://aip.baidubce.com/oauth/2.0/token?grant_type=client_credentials&client_id={}&client_secret={}'.format(ak, sk)
         req = requests.post(host, headers={'Content-Type': 'application/json; charset=UTF-8'})
         access_token = req.json()["access_token"]
+        print(access_token)
+
         baidu_ocr(101)
     elif mode == 1:
-        X = tf.placeholder(tf.float32, [None, HEIGHT * WIDTH])
-        Y = tf.placeholder(tf.float32, [None, 48])
-        keep_prob = tf.placeholder(tf.float32)
         train_crack_captcha_cnn()
     elif mode == 2:
-        X = tf.placeholder(tf.float32, [None, HEIGHT * WIDTH])
-        Y = tf.placeholder(tf.float32, [None, 48])
-        keep_prob = tf.placeholder(tf.float32)
         test_cnn_accuracy()
