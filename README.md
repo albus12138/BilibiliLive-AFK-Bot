@@ -4,7 +4,7 @@
 
 TODO List:
 
-- `[ ] 登录`
+- `[x] 登录`
 
 - `[ ] 自动领取银瓜子`
 
@@ -21,7 +21,9 @@ TODO List:
 
 Requirements:
 
-- Headless Chrome( or google-chrome-stable) & chromedriver
+- Python Libraries
+
+- Chrome(google-chrome-stable) & chromedriver
 
 Reference:
 
