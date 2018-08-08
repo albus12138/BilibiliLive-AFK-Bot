@@ -17,3 +17,12 @@ TODO List:
 - `[ ] 直播间挂机经验` 
 
 - `[x] 每日签到`
+
+
+Requirements:
+
+- Headless Chrome( or google-chrome-stable) & chromedriver
+
+Reference:
+
+- [bilibili_geetest](https://github.com/OSinoooO/bilibili_geetest)
