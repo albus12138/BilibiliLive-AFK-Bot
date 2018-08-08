@@ -201,11 +201,15 @@ class CrackGeetest():
         """
         try:
             if re.findall('gt_success', self.browser.page_source, re.S):
+                self.browser.get("https://live.bilibili.com")
+                cookie = [item["name"] + ":" + item["value"] for item in self.browser.get_cookies()]
                 print('验证成功！')
-                return True
+                return True, cookie
             else:
+                self.browser.get("https://live.bilibili.com")
+                cookie = [item["name"] + ":" + item["value"] for item in self.browser.get_cookies()]
                 print('验证失败！')
-                return False
+                return False, cookie
         except TimeoutError:
             print('加载超时...')
         finally:
@@ -225,43 +229,26 @@ def login(username, password, url):
         elem_pwd = crack.browser.find_element_by_id("login-passwd")
         elem_pwd.send_keys(password)
 
-        bg_location_list, fullgb_location_list = check.get_geetest_image()
-        img1 = check.get_merge_image('Image/fullgb.jpg', fullgb_location_list)
-        img2 = check.get_merge_image('Image/bg.jpg', bg_location_list)
+        bg_location_list, fullgb_location_list = crack.get_geetest_image()
+        img1 = crack.get_merge_image('Image/fullgb.jpg', fullgb_location_list)
+        img2 = crack.get_merge_image('Image/bg.jpg', bg_location_list)
         # distance应根据实际情况做微调
-        distance = check.get_gap(img1, img2) * 1.138
-        slider = check.get_slider()
-        tracks = check.get_track(distance)
-        check.move_to_gap(slider, tracks)
+        distance = crack.get_gap(img1, img2) * 1.138
+        slider = crack.get_slider()
+        tracks = crack.get_track(distance)
+        crack.move_to_gap(slider, tracks)
         time.sleep(0.5)
-        success = check.success_check()
+        success, cookie = crack.success_check()
         if success:
             break
 
-    cookie = [item["name"] + ":" + item["value"] for item in crack.browser.get_cookies()]
     cook_map = {}
     for item in cookie:
         str = item.split(':')
         cook_map[str[0]] = str[1]
+    print(cook_map)
     return cook_map
 
 
 if __name__ == '__main__':
-    try:
-        while True:
-            check = CrackGeetest()
-            check.browser.get(check.url)
-            bg_location_list, fullgb_location_list = check.get_geetest_image()
-            img1 = check.get_merge_image('Image/fullgb.jpg', fullgb_location_list)
-            img2 = check.get_merge_image('Image/bg.jpg', bg_location_list)
-            # distance应根据实际情况做微调
-            distance = check.get_gap(img1, img2) * 1.138
-            slider = check.get_slider()
-            tracks = check.get_track(distance)
-            check.move_to_gap(slider, tracks)
-            time.sleep(0.5)
-            CHECK = check.success_check()
-            if CHECK == True:
-                break
-    except Exception:
-        print('程序出错啦！')
+    login("username", "password", "https://passport.bilibili.com/login")

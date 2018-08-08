@@ -1,28 +1,31 @@
 import re
 import base64
 import requests
-import time
-import random
 import numpy as np
+from bs4 import BeautifulSoup
 from PIL import Image
 from skimage import morphology, filters
 from tf_train import ocr_cnn
+from geetest_crack import login
 
 
 urls = {
     "LiveIndex": "https://live.bilibili.com",
     "Captcha": "https://api.live.bilibili.com/lottery/v1/SilverBox/getCaptcha",
     "Sign": "https://api.live.bilibili.com/sign/doSign",
-    "getCurrentTask": "https://api.live.bilibili.com/lottery/v1/SilverBox/getCurrentTask"
+    "getCurrentTask": "https://api.live.bilibili.com/lottery/v1/SilverBox/getCurrentTask",
+    "Login": "https://passport.bilibili.com/login"
 }
 
 
 class Bilibili:
-    def __init__(self, cookies=None):
+    def __init__(self, username, password, cookies=None):
         self._session = requests.Session()
-        if cookies:
-            self._session.cookies.update(cookies)
-        self._session.get(urls["LiveIndex"])
+        if cookies is None:
+            cookies = self.login(username, password)
+        self._session.cookies.update(cookies)
+        if not self.check_session_status():
+            raise RuntimeError("登录状态错误, 请检查输入的Cookie或用户名密码")
 
     def _get_captcha(self, filename=".captcha."):
         try:
@@ -82,7 +85,18 @@ class Bilibili:
         res = self._session.get(urls["Sign"])
         data = res.json()
         if data["msg"] == "OK":
-            print(data["data"]["text"])
+            print("签到成功: 获得{}".format(data["data"]["text"]))
             return 1
-        print(data)
         return 0
+
+    def check_session_status(self):
+        html = self._session.get(urls["LiveIndex"]).content
+        soup = BeautifulSoup(html, "lxml")
+        if len(soup.find_all("span", string="登录")) > 0:
+            return False
+        return True
+
+    @staticmethod
+    def login(username, password):
+        cookie = login(username, password, urls["Login"])
+        return cookie
