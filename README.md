@@ -14,8 +14,6 @@ TODO List:
 
 - `[ ] 自动处理即将过期礼物`
 
-- `[ ] 直播间挂机经验` 
-
 - `[x] 每日签到`
 
 
@@ -23,8 +21,10 @@ Requirements:
 
 - Python Libraries
 
-- Chrome(google-chrome-stable) & chromedriver
+- Chrome(google-chrome-stable) & chromedriver (Common 登录模式需要)
 
 Reference:
 
 - [bilibili_geetest](https://github.com/OSinoooO/bilibili_geetest)
+
+- [bilibili_api](https://github.com/ysc3839/bilibili-api)
