@@ -71,3 +71,4 @@ tmp/
 train_data/
 .tmp.bmp
 list.txt
+Image/*
