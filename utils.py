@@ -4,12 +4,12 @@ import requests
 import numpy as np
 import time
 import logging
+import coloredlogs
 from Crypto.Cipher import PKCS1_v1_5
 from Crypto.PublicKey import RSA
 from hashlib import md5
 from urllib.parse import urlencode
 from configparser import ConfigParser
-from bs4 import BeautifulSoup
 from PIL import Image
 from skimage import morphology, filters
 from tf_train import ocr_cnn
@@ -19,12 +19,7 @@ from geetest_crack import login
 class Bilibili:
     def __init__(self, config_file):
         self.logger = logging.getLogger("BilibiliLive_AFK_Bot")
-        self.logger.setLevel(logging.DEBUG)
-        handler = logging.StreamHandler()
-        formatter = logging.Formatter("%(asctime)s [%(levelname)s] %(message)s")
-        handler.setFormatter(formatter)
-        handler.setLevel(logging.INFO)
-        self.logger.addHandler(handler)
+        coloredlogs.install(level='DEBUG', logger=self.logger, fmt="%(asctime)s [%(levelname)8s] %(message)s")
         self.logger.info("Bilibili Live AFK Bot 启动~")
 
         self.logger.info("载入配置文件...")
@@ -107,15 +102,16 @@ class Bilibili:
             self.logger.info("    签到成功, 获得 {}".format(data["data"]["text"]))
             self.logger.info("退出每日签到模块")
             return 1
-        self.logger.info(data)
+        self.logger.warning("    签到失败, 原因: {}".format(data.get("message")))
         self.logger.info("退出每日签到模块")
         return 0
 
     def check_session_status(self):
-        html = self._session.get(self.urls["LiveIndex"]).content
-        soup = BeautifulSoup(html, "lxml")
-        if len(soup.find_all("span", string="登录")) > 0:
+        res = self._session.get(self.urls["userInfo"])
+        data = res.json()
+        if data.get("code") != 0:
             return False
+        self.logger.info("    当前会话用户: {}".format(data.get("data")["uname"]))
         return True
 
     def login(self):
@@ -134,14 +130,15 @@ class Bilibili:
 
         if self.login_mode == 2:
             self.logger.info("    登录模式: Common")
-            self.login_common()
+            cookie = self.login_common()
+            requests.utils.add_dict_to_cookiejar(self._session.cookies, cookie)
 
         if not self.check_session_status():
             raise RuntimeError("登录状态错误, 请检查用户名和密码")
         self.logger.info("退出登录模块")
 
     def login_common(self):
-        cookie = login(self.username, self.password, self.urls["Login"])
+        cookie = login(self.username, self.password, self.urls["Login"], self.logger)
         return cookie
 
     def _build_payload(self, payload):
@@ -159,8 +156,8 @@ class Bilibili:
         if data.get("code") != 0:
             self.logger.warning("    载入令牌失败, 尝试刷新令牌")
             return False
-        self.logger.info("    载入令牌成功, 令牌有效期: {}".format(time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(int(data.get('ts'))+int(data.get('data')['expires_in'])))))
-        return True
+        self.logger.info("    载入令牌成功! 令牌有效期: {}".format(time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(int(data.get('ts'))+int(data.get('data')['expires_in'])))))
+        return int(data.get('data')['expires_in']) > 86400
 
     def refresh_access_token(self):
         if self.refresh_key == "":
