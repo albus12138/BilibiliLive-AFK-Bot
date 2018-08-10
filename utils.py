@@ -120,7 +120,7 @@ class Bilibili:
     def login(self):
         self.logger.info("登录模块启动")
         if self.login_mode == 1:
-            self.logger.info("    登录模式: OAUTH")
+            self.logger.info("    登录模式: OAuth")
             if self.access_key == "":
                 self.logger.info("    未检测到 ACCESS_KEY, 尝试 OAuth 登录")
                 self.login_oauth()
@@ -293,7 +293,44 @@ class Bilibili:
         self.logger.info("退出过期礼物处理模块")
         return True
 
+    def get_group_list(self):
+        payload = self._build_payload()
+        res = self._session.get(self.urls["group_list"], params=payload)
+        data = res.json()
+        if data.get("code") != 0:
+            self.logger.error("    获取应援团信息失败")
+            return []
+        self.logger.info("    查询到 {} 个应援团".format(len(data.get("data")["list"])))
+        return data.get("data")["list"]
+
+    def group_sign(self, group):
+        payload = self._build_payload({"group_id": group["group_id"], "owner_id": group["owner_uid"]})
+        res = self._session.get(self.urls["group_signin"], params=payload)
+        data = res.json()
+        if data.get("code") != 0:
+            self.logger.warning("    应援失败, 原因: {}".format(data.get("message")))
+            return False
+        if data.get("data")["status"] == 0:
+            self.logger.info("    {} 应援成功~ 获得 {} 点徽章亲密度".format(group["fans_medal_name"], data.get("data")["add_num"]))
+        else:
+            self.logger.info("    {} 今天已经为主播应援了~".format(group["fans_medal_name"]))
+        return True
+
+    def group(self):
+        self.logger.info("应援模块启动")
+        group_list = self.get_group_list()
+        if len(group_list) == 0:
+            self.logger.info("退出应援模块")
+            return True
+
+        self.logger.info("    开始应援")
+        for group in group_list:
+            self.group_sign(group)
+        self.logger.info("    应援完成")
+        self.logger.info("退出应援模块")
+        return True
+
     def test(self):
-        payload = self._build_payload({'id': 649091})
-        res = self._session.get(self.urls["roominfo"], params=payload)
+        payload = self._build_payload({"group_id": 221033522, "owner_id": 372418})
+        res = self._session.get(self.urls["group_signin"], params=payload)
         self.logger.info(res.content.decode('u8'))
