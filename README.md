@@ -16,6 +16,8 @@ TODO List:
 
 - `[x] 每日签到`
 
+- `[x] 应援团每日签到`
+
 
 Requirements:
 
