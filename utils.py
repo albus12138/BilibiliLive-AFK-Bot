@@ -36,6 +36,7 @@ class Bilibili:
         self.access_key = config["PAYLOAD"]["access_key"]
         self.appkey = self.shared_payload["appkey"]
         self.room_id = config["USER"]["roomID"]
+        self.sliver2coin = int(config["USER"]["sliver2coin"])
         self.logger.info("配置文件载入完成")
 
         self.uid = 0
@@ -329,6 +330,31 @@ class Bilibili:
         self.logger.info("    应援完成")
         self.logger.info("退出应援模块")
         return True
+
+    def silver_to_coin(self):
+        if self.sliver2coin == 0:
+            return True
+
+        self.logger.info("银瓜子兑换硬币模块启动")
+        if self.sliver2coin == 1:
+            payload = self._build_payload()
+            res = self._session.get(self.urls["sliver2coin_app"], params=payload)
+            data = res.json()
+            self.logger.info(res.content.decode("u8"))
+            if data.get("code") != 0:
+                self.logger.error("    移动端银瓜子兑换硬币失败, 原因: {}".format(data.get("message")))
+            else:
+                self.logger.info("    移动端银瓜子兑换硬币成功, 银瓜子 -700, 硬币 +1")
+        else:
+            payload = self._build_payload()
+            res = self._session.get(self.urls["sliver2coin_web"], params=payload)
+            data = res.json()
+            self.logger.info(res.content.decode("u8"))
+            if data.get("code") != 0:
+                self.logger.error("    网页端银瓜子兑换硬币失败, 原因: {}".format(data.get("message")))
+            else:
+                self.logger.info("    网页端银瓜子兑换硬币成功, 银瓜子 -700, 硬币 +1")
+        self.logger.info("退出银瓜子兑换硬币模块")
 
     def test(self):
         payload = self._build_payload({"group_id": 221033522, "owner_id": 372418})
