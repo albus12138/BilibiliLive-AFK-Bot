@@ -35,8 +35,11 @@ class Bilibili:
         self.refresh_key = self.shared_payload.pop("refresh_key")
         self.access_key = config["PAYLOAD"]["access_key"]
         self.appkey = self.shared_payload["appkey"]
+        self.room_id = config["USER"]["roomID"]
         self.logger.info("配置文件载入完成")
 
+        self.uid = 0
+        self.room_uid = 0
         self._session = requests.Session()
         self.login()
 
@@ -141,7 +144,9 @@ class Bilibili:
         cookie = login(self.username, self.password, self.urls["Login"], self.logger)
         return cookie
 
-    def _build_payload(self, payload):
+    def _build_payload(self, payload=None):
+        if payload is None:
+            payload = {}
         payload.update(self.shared_payload)
         payload["ts"] = int(time.time())
         items = list(payload.items())
@@ -156,7 +161,8 @@ class Bilibili:
         if data.get("code") != 0:
             self.logger.warning("    载入令牌失败, 尝试刷新令牌")
             return False
-        self.logger.info("    载入令牌成功! 令牌有效期: {}".format(time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(int(data.get('ts'))+int(data.get('data')['expires_in'])))))
+        self.logger.info("    载入令牌成功! 令牌有效期: {}".format(time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(
+            int(data.get('ts')) + int(data.get('data')['expires_in'])))))
         return int(data.get('data')['expires_in']) > 86400
 
     def refresh_access_token(self):
@@ -178,7 +184,7 @@ class Bilibili:
         return True
 
     def login_oauth(self):
-        payload = self._build_payload({})
+        payload = self._build_payload()
         res = self._session.post(self.urls["OAuthKey"], data=payload)
         data = res.json()
         if data.get("code") != 0:
@@ -189,7 +195,8 @@ class Bilibili:
         key = RSA.importKey(data.get("data")['key'].encode("ascii"))
         cipher = PKCS1_v1_5.new(key)
         password = base64.b64encode(cipher.encrypt(key1+self.password.encode('ascii')))
-        payload = self._build_payload({"subid": '1', 'permission': 'ALL', 'username': self.username, 'password': password, 'captcha': ''})
+        payload = self._build_payload(
+            {"subid": '1', 'permission': 'ALL', 'username': self.username, 'password': password, 'captcha': ''})
         res = self._session.post(self.urls["OAuthLogin"], data=payload)
         data = res.json()
         if data.get("code") != 0:
@@ -209,3 +216,84 @@ class Bilibili:
         payload = self._build_payload({"appkey": self.appkey, "gourl": self.urls["LiveIndex"]})
         self._session.get(self.urls["OAuthSSO"], params=payload)
         self.logger.info("    获取 Cookies 成功!")
+
+    def get_room_info(self):
+        payload = self._build_payload()
+        res = self._session.get(self.urls["myInfo"], params=payload)
+        data = res.json()
+        try:
+            self.uid = data["mid"]
+        except KeyError:
+            self.logger.error("    获取个人信息失败, 取消过期礼物清理任务")
+            return False
+        self.logger.info("    获取个人信息成功, UID: {}".format(self.uid))
+
+        payload = self._build_payload({'id': self.room_id})
+        res = self._session.get(self.urls["roomInfo"], params=payload)
+        data = res.json()
+        if data.get("code") != 0:
+            self.logger.error("    获取直播间信息失败, 取消过期礼物清理任务")
+            return False
+        self.room_uid = data.get("data")["uid"]
+        self.room_id = data.get("data")["room_id"]
+        self.logger.info("    获取房间信息成功, RoomUID: {}, RoomID {}".format(self.room_uid, self.room_id))
+        self.logger.info("    生成直播间信息成功!")
+        return True
+
+    def list_gift_bag(self):
+        payload = self._build_payload()
+        res = self._session.get(self.urls["bag_list"], params=payload)
+        data = res.json()
+        if data.get("code") != 0:
+            self.logger.warning("    查看礼物库存失败")
+            return []
+        self.logger.info("    查看礼物库存成功, 共计 {} 件礼物".format(len(data.get("data")["list"])))
+        return data.get("data")["list"]
+
+    def send_gift(self, gift):
+        raw_payload = {
+            'coin_type': 'sliver',
+            'gift_id': gift["gift_id"],
+            'ruid': self.room_uid,
+            'uid': self.uid,
+            'biz_id': self.room_id,
+            'gift_num': gift["gift_num"],
+            'data_source_id': '',
+            'data_behavior_id': '',
+            'bag_id': gift['bag_id']
+        }
+        payload = self._build_payload(raw_payload)
+        res = self._session.post(self.urls["sendGift"], data=payload)
+        data = res.json()
+        if data.get("code") != 0:
+            self.logger.warning("    投喂失败, 原因: {}".format(data.get("message")))
+            return False
+        self.logger.info("    投喂 {} x {} 到 {} 直播间~".format(gift["gift_name"], gift["gift_num"], self.room_id))
+        return True
+
+    def gift(self):
+        self.logger.info("过期礼物处理模块启动")
+        if self.uid == 0 or self.room_uid == 0:
+            self.logger.info("    未检测到个人信息或直播间信息, 尝试生成")
+            if not self.get_room_info():
+                self.logger.info("退出过期礼物处理模块")
+                return False
+
+        gift_list = self.list_gift_bag()
+        if len(gift_list) == 0:
+            self.logger.info("退出过期礼物处理模块")
+            return True
+
+        self.logger.info("    开始赠送 24 小时内过期礼物")
+        for gift in gift_list:
+            ts = int(time.time())
+            if gift["expire_at"] - ts < 86400:
+                self.send_gift(gift)
+        self.logger.info("    24 小时内过期礼物处理完成")
+        self.logger.info("退出过期礼物处理模块")
+        return True
+
+    def test(self):
+        payload = self._build_payload({'id': 649091})
+        res = self._session.get(self.urls["roominfo"], params=payload)
+        self.logger.info(res.content.decode('u8'))
