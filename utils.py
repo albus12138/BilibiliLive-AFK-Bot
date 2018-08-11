@@ -5,6 +5,14 @@ import numpy as np
 import time
 import logging
 import coloredlogs
+import websocket
+import struct
+import json
+try:
+    import thread
+except ImportError:
+    import _thread as thread
+
 from Crypto.Cipher import PKCS1_v1_5
 from Crypto.PublicKey import RSA
 from hashlib import md5
@@ -42,7 +50,6 @@ class Bilibili:
         self.uid = 0
         self.room_uid = 0
         self._session = requests.Session()
-        self.login()
 
     def _get_captcha(self, filename=".captcha."):
         try:
@@ -356,7 +363,110 @@ class Bilibili:
                 self.logger.info("    网页端银瓜子兑换硬币成功, 银瓜子 -700, 硬币 +1")
         self.logger.info("退出银瓜子兑换硬币模块")
 
+    def raffle_callback(self, room_id):
+        pass
+
     def test(self):
         payload = self._build_payload({"group_id": 221033522, "owner_id": 372418})
         res = self._session.get(self.urls["group_signin"], params=payload)
         self.logger.info(res.content.decode('u8'))
+
+
+class BilibiliBulletScreen:
+    def __init__(self, host, origin, room_id, logger, keyword, raffle_callback, silent=True):
+        websocket.enableTrace(True)
+        self.host = host
+        self.origin = origin
+        self.room_id = room_id
+        self.logger = logger
+        self.keywords = keyword
+        self.raffle_callback = raffle_callback
+        self.silent = silent
+        self._ws = websocket.WebSocketApp(host,
+                                          on_message=self.on_message,
+                                          on_error=self.on_error,
+                                          on_open=self.on_open,
+                                          on_close=self.on_close)
+
+        self.status = 0
+        self.hot = 0
+        self.stop = 0
+
+    def run_forever(self):
+        return self._ws.run_forever(host=self.host, origin=self.origin)
+
+    @staticmethod
+    def pack_msg(payload, opt):
+        return struct.pack(">IHHII", 0x10 + len(payload), 0x10, 0x01, opt, 0x01) + payload.encode('u8')
+
+    def process_msg(self, msg):
+        if msg[3] == 3:
+            self.hot = int.from_bytes(msg[-1], byteorder='big')
+            print("hot: {}".format(self.hot))
+            return True
+        if msg[3] == 5:
+            data = json.loads(msg[-1].decode("utf-8"))
+            import os
+            if not os.path.exists("json_data/danmu/{}.json".format(data["cmd"])):
+                with open("json_data/danmu/{}.json".format(data["cmd"]), 'w') as wfile:
+                    wfile.write(str(data))
+            if data["cmd"] == "DANMU_MSG":
+                if not self.silent:
+                    medal = "" if len(data["info"][3]) == 0 else "[{}] ".format(data["info"][3][1])
+                    self.logger.info("    {}{} 说: {}".format(medal, data["info"][2][1], data["info"][1]))
+                return True
+            if data["cmd"] == "SYS_MSG":
+                msg = data["msg"].split(":?")
+                for keyword in self.keywords:
+                    if keyword in msg[-1]:
+                        self.logger.info("    系统消息: 检测到 {} 出现 {}".format(data["real_roomid"], keyword))
+                        self.raffle_callback(data["real_roomid"])
+                return True
+            if data["cmd"] == "SEND_GIFT":
+                if not self.silent:
+                    self.logger.info("    {} 投喂了 {} x {}".format(data["data"]["uname"], data["data"]["giftName"],
+                                                                 data["data"]["num"]))
+                return True
+            return True
+        if msg[3] == 8:
+            self.logger.info("    服务器允许连接!")
+            self.status = 1
+            return True
+
+    def heart(self):
+        while not self.status:
+            print("等待服务器允许连接")
+            time.sleep(1)
+
+        while not self.stop:
+            print("发送心跳包")
+            data = self.pack_msg("", 0x2)
+            print("data: {}".format(data))
+            self._ws.send(data)
+            time.sleep(30)
+
+    def on_open(self, ws):
+        raw_payload = {
+            'uid': 0,
+            'roomid': self.room_id,
+            'protover': 1,
+            'platform': 'web',
+            'clientver': '1.4.1'
+        }
+        data = self.pack_msg(json.dumps(raw_payload), 0x7)
+        self._ws.send(data)
+        thread.start_new_thread(self.heart, ())
+
+    def on_message(self, ws, msg):
+        while len(msg) != 0:
+            pkt_length = int.from_bytes(msg[:4], byteorder='big')
+            pkt = struct.unpack(">IHHII{}s{}s".format(pkt_length-16, len(msg)-pkt_length), msg)
+            self.process_msg(pkt[:-1])
+            msg = pkt[-1]
+
+    def on_error(self, ws, err):
+        self.logger.error("    错误原因: {}".format(err))
+
+    def on_close(self, ws):
+        self.stop = 1
+        self.logger.info("    WebSocket 连接已关闭")
