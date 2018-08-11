@@ -374,7 +374,6 @@ class Bilibili:
 
 class BilibiliBulletScreen:
     def __init__(self, host, origin, room_id, logger, keyword, raffle_callback, silent=True):
-        websocket.enableTrace(True)
         self.host = host
         self.origin = origin
         self.room_id = room_id
