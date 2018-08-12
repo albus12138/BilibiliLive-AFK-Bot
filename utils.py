@@ -43,11 +43,21 @@ class Bilibili:
         self.appkey = self.shared_payload["appkey"]
         self.room_id = config["USER"]["roomID"]
         self.sliver2coin = int(config["USER"]["sliver2coin"])
+        self.raffle_keyword = config["GENERAL"]["raffle_keyword"].split("_")
         self.logger.info("配置文件载入完成")
 
         self.uid = 0
         self.room_uid = 0
         self._session = requests.Session()
+        self.bullet_screen_client = BilibiliBulletScreen(
+            self.urls["bulletscreen_host"],
+            self.urls["bulletscreen_origin"],
+            self.room_id,
+            self.logger,
+            self.raffle_keyword,
+            self.raffle_callback
+        )
+        self.thread_pool = ThreadPool(5, 10)
 
     def _get_captcha(self, filename=".captcha."):
         try:
@@ -364,6 +374,16 @@ class Bilibili:
     def raffle_callback(self, room_id):
         pass
 
+    def bullet_screen(self):
+        self.logger.info("弹幕姬启动~")
+        self.bullet_screen_client.main.start()
+        time.sleep(60)
+        self.bullet_screen_client.quit()
+        self.logger.info("退出弹幕姬, 下次再见呐~")
+
+    def quit(self):
+        self.thread_pool.stop()
+
     def test(self):
         payload = self._build_payload({"group_id": 221033522, "owner_id": 372418})
         res = self._session.get(self.urls["group_signin"], params=payload)
@@ -374,7 +394,7 @@ class BilibiliBulletScreen:
     def __init__(self, host, origin, room_id, logger, keyword, raffle_callback, silent=True):
         self.host = host
         self.origin = origin
-        self.room_id = room_id
+        self.room_id = int(room_id)
         self.logger = logger
         self.keywords = keyword
         self.raffle_callback = raffle_callback
@@ -389,9 +409,10 @@ class BilibiliBulletScreen:
         self.hot = 0
         self.stop = 0
         self.daemon = threading.Thread(target=self.heart, args=())
+        self.main = threading.Thread(target=self.run_forever, args=())
 
     def run_forever(self):
-        return self._ws.run_forever(host=self.host, origin=self.origin)
+        self._ws.run_forever(host=self.host, origin=self.origin)
 
     @staticmethod
     def pack_msg(payload, opt):
@@ -400,14 +421,16 @@ class BilibiliBulletScreen:
     def process_msg(self, msg):
         if msg[3] == 3:
             self.hot = int.from_bytes(msg[-1], byteorder='big')
-            print("hot: {}".format(self.hot))
+            self.logger.info("    当前直播间人气: {}".format(self.hot))
             return True
         if msg[3] == 5:
             data = json.loads(msg[-1].decode("utf-8"))
+            ####  DEBUG  ####
             import os
             if not os.path.exists("json_data/danmu/{}.json".format(data["cmd"])):
                 with open("json_data/danmu/{}.json".format(data["cmd"]), 'w') as wfile:
                     wfile.write(str(data))
+            ####  DEBUG  ####
             if data["cmd"] == "DANMU_MSG":
                 if not self.silent:
                     medal = "" if len(data["info"][3]) == 0 else "[{}] ".format(data["info"][3][1])
@@ -427,19 +450,16 @@ class BilibiliBulletScreen:
                 return True
             return True
         if msg[3] == 8:
-            self.logger.info("    服务器允许连接!")
+            self.logger.info("    已连接到直播间 {}".format(self.room_id))
             self.status = 1
             return True
 
     def heart(self):
         while not self.status:
-            print("等待服务器允许连接")
             time.sleep(1)
 
         while not self.stop:
-            print("发送心跳包")
             data = self.pack_msg("", 0x2)
-            print("data: {}".format(data))
             self._ws.send(data)
             time.sleep(30)
 
@@ -471,6 +491,13 @@ class BilibiliBulletScreen:
             pass
         self.logger.info("    心跳包已停止发送")
         self.logger.info("    WebSocket 连接已关闭")
+
+    def quit(self):
+        self.stop = 1
+        self.daemon.join()
+        self._ws.close()
+        self.main.join()
+        return True
 
 
 class ThreadPool:
