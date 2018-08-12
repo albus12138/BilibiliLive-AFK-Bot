@@ -8,11 +8,9 @@ import coloredlogs
 import websocket
 import struct
 import json
-try:
-    import thread
-except ImportError:
-    import _thread as thread
+import threading
 
+from collections import deque
 from Crypto.Cipher import PKCS1_v1_5
 from Crypto.PublicKey import RSA
 from hashlib import md5
@@ -390,6 +388,7 @@ class BilibiliBulletScreen:
         self.status = 0
         self.hot = 0
         self.stop = 0
+        self.daemon = threading.Thread(target=self.heart, args=())
 
     def run_forever(self):
         return self._ws.run_forever(host=self.host, origin=self.origin)
@@ -454,7 +453,7 @@ class BilibiliBulletScreen:
         }
         data = self.pack_msg(json.dumps(raw_payload), 0x7)
         self._ws.send(data)
-        thread.start_new_thread(self.heart, ())
+        self.daemon.start()
 
     def on_message(self, ws, msg):
         while len(msg) != 0:
@@ -468,4 +467,39 @@ class BilibiliBulletScreen:
 
     def on_close(self, ws):
         self.stop = 1
+        while self.daemon.isAlive():
+            pass
+        self.logger.info("    心跳包已停止发送")
         self.logger.info("    WebSocket 连接已关闭")
+
+
+class ThreadPool:
+    def __init__(self, max_worker, max_queue):
+        self.max_worker = max_worker
+        self.max_queue = max_queue
+
+        self.pool = []
+        self.run = True
+        self.queue = deque(maxlen=self.max_queue)
+        self.daemon = threading.Thread(target=self.check, args=())
+        self.daemon.start()
+
+    def submit(self, func, args):
+        self.queue.append((func, args))
+
+    def check(self):
+        while self.run:
+            for thread in self.pool:
+                if not thread.isAlive():
+                    self.pool.remove(thread)
+            if (len(self.pool) != self.max_worker) and (len(self.queue) != 0):
+                task = self.queue.pop()
+                if task:
+                    self.pool.append(threading.Thread(target=task[0], args=task[1]))
+                    self.pool[-1].start()
+            time.sleep(1)
+
+    def stop(self):
+        self.run = False
+        while self.daemon.isAlive():
+            pass
