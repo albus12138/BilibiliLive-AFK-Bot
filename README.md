@@ -18,6 +18,8 @@ TODO List:
 
 - `[x] 应援团每日签到`
 
+- `[x] 弹幕姬`
+
 
 Requirements:
 
