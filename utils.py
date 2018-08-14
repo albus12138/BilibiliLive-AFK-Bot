@@ -9,6 +9,7 @@ import websocket
 import struct
 import json
 import threading
+import random
 
 from collections import deque
 from Crypto.Cipher import PKCS1_v1_5
@@ -26,9 +27,11 @@ class Bilibili:
     def __init__(self, config_file):
         self.logger = logging.getLogger("BilibiliLive_AFK_Bot")
         coloredlogs.install(level='DEBUG', logger=self.logger, fmt="%(asctime)s [%(levelname)8s] %(message)s")
-        self.logger.info("Bilibili Live AFK Bot 启动~")
+        self.logger.info("[主线程] Bilibili Live AFK Bot 启动~")
 
-        self.logger.info("载入配置文件...")
+        self._session = requests.Session()
+
+        self.logger.info("[主线程] 载入配置文件...")
         config = ConfigParser()
         config.read(config_file)
         self.config_file = config_file
@@ -41,23 +44,32 @@ class Bilibili:
         self.refresh_key = self.shared_payload.pop("refresh_key")
         self.access_key = config["PAYLOAD"]["access_key"]
         self.appkey = self.shared_payload["appkey"]
-        self.room_id = config["USER"]["roomID"]
+        self.room_id = self.get_real_roomid(config["USER"]["roomID"])
+        if not self.room_id:
+            self.room_id = int(config["USER"]["roomID"])
         self.sliver2coin = int(config["USER"]["sliver2coin"])
         self.raffle_keyword = config["GENERAL"]["raffle_keyword"].split("_")
-        self.logger.info("配置文件载入完成")
+        self.enable_raffle = int(config["USER"]["enable_raffle"])
+        self.drop_rate = int(config["USER"]["drop_rate"])
+        self.SCKEY = config["USER"]["SCKEY"]
+        self.logger.info("[主线程] 配置文件载入完成")
 
         self.uid = 0
         self.room_uid = 0
-        self._session = requests.Session()
+        self.realname = 0
+        self.vip = 0
+        self.uname = ""
         self.bullet_screen_client = BilibiliBulletScreen(
             self.urls["bulletscreen_host"],
             self.urls["bulletscreen_origin"],
             self.room_id,
             self.logger,
             self.raffle_keyword,
-            self.raffle_callback
+            self.raffle_callback,
+            True
         )
         self.thread_pool = ThreadPool(5, 10)
+        self.query_queue = []
 
     def _get_captcha(self, filename=".captcha."):
         try:
@@ -114,15 +126,12 @@ class Bilibili:
         return ocr_cnn()
 
     def sign(self):
-        self.logger.info("每日签到模块启动")
         res = self._session.get(self.urls["Sign"])
         data = res.json()
         if data["msg"] == "OK":
-            self.logger.info("    签到成功, 获得 {}".format(data["data"]["text"]))
-            self.logger.info("退出每日签到模块")
+            self.logger.info("[每日签到] 签到成功, 获得 {}".format(data["data"]["text"]))
             return 1
-        self.logger.warning("    签到失败, 原因: {}".format(data.get("message")))
-        self.logger.info("退出每日签到模块")
+        self.logger.warning("[每日签到] 签到失败, 原因: {}".format(data.get("message")))
         return 0
 
     def check_session_status(self):
@@ -130,31 +139,29 @@ class Bilibili:
         data = res.json()
         if data.get("code") != 0:
             return False
-        self.logger.info("    当前会话用户: {}".format(data.get("data")["uname"]))
+        self.logger.info("[主线程] 当前会话用户: {}".format(data.get("data")["uname"]))
         return True
 
     def login(self):
-        self.logger.info("登录模块启动")
         if self.login_mode == 1:
-            self.logger.info("    登录模式: OAuth")
+            self.logger.info("[登录] 登录模式: OAuth")
             if self.access_key == "":
-                self.logger.info("    未检测到 ACCESS_KEY, 尝试 OAuth 登录")
+                self.logger.info("[登录] 未检测到 ACCESS_KEY, 尝试 OAuth 登录")
                 self.login_oauth()
             else:
-                self.logger.info("    检测到 ACCESS_KEY, 尝试载入令牌")
+                self.logger.info("[登录] 检测到 ACCESS_KEY, 尝试载入令牌")
                 if not self.check_access_token():
                     if not self.refresh_access_token():
                         self.login_oauth()
             self.oauth_sso()
 
         if self.login_mode == 2:
-            self.logger.info("    登录模式: Common")
+            self.logger.info("[登录] 登录模式: Common")
             cookie = self.login_common()
             requests.utils.add_dict_to_cookiejar(self._session.cookies, cookie)
 
         if not self.check_session_status():
             raise RuntimeError("登录状态错误, 请检查用户名和密码")
-        self.logger.info("退出登录模块")
 
     def login_common(self):
         cookie = login(self.username, self.password, self.urls["Login"], self.logger)
@@ -175,9 +182,9 @@ class Bilibili:
         res = self._session.get(self.urls["OAuthInfo"], params=payload)
         data = res.json()
         if data.get("code") != 0:
-            self.logger.warning("    载入令牌失败, 尝试刷新令牌")
+            self.logger.warning("[登录] 载入令牌失败, 尝试刷新令牌")
             return False
-        self.logger.info("    载入令牌成功! 令牌有效期: {}".format(time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(
+        self.logger.info("[登录] 载入令牌成功! 令牌有效期: {}".format(time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(
             int(data.get('ts')) + int(data.get('data')['expires_in'])))))
         return int(data.get('data')['expires_in']) > 86400
 
@@ -188,9 +195,9 @@ class Bilibili:
         res = self._session.post(self.urls, data=payload)
         data = res.json()
         if data.get("code") != 0:
-            self.logger.warning("    刷新令牌失败, 尝试 OAuth 登录")
+            self.logger.warning("[登录] 刷新令牌失败, 尝试 OAuth 登录")
             return False
-        self.logger.info("    刷新令牌成功, 登录完成!")
+        self.logger.info("[登录] 刷新令牌成功, 登录完成!")
         config = ConfigParser()
         config.read(self.config_file)
         config.set("PAYLOAD", "access_key", self.access_key)
@@ -204,9 +211,9 @@ class Bilibili:
         res = self._session.post(self.urls["OAuthKey"], data=payload)
         data = res.json()
         if data.get("code") != 0:
-            self.logger.error("    获取公钥失败, 错误信息: {}".format(data.get("message")))
+            self.logger.error("[登录] 获取公钥失败, 错误信息: {}".format(data.get("message")))
             raise RuntimeError("错误信息: {}".format(data.get["message"]))
-        self.logger.info("    获取公钥成功!")
+        self.logger.info("[登录] 获取公钥成功!")
         key1 = data.get("data")['hash'].encode("ascii")
         key = RSA.importKey(data.get("data")['key'].encode("ascii"))
         cipher = PKCS1_v1_5.new(key)
@@ -216,10 +223,9 @@ class Bilibili:
         res = self._session.post(self.urls["OAuthLogin"], data=payload)
         data = res.json()
         if data.get("code") != 0:
-            self.logger.error("    OAuth 登录失败, 错误信息: {}".format(data.get("message")))
+            self.logger.error("[登录] OAuth 登录失败, 错误信息: {}".format(data.get("message")))
             raise RuntimeError("错误信息: {}".format(data.get("message")))
-        self.logger.info("    OAuth 登录成功!")
-        self.logger.info(data)
+        self.logger.info("[登录] OAuth 登录成功!")
         config = ConfigParser()
         config.read(self.config_file)
         config.set("PAYLOAD", "access_key", data.get("data")["token_info"]["access_token"])
@@ -231,7 +237,7 @@ class Bilibili:
     def oauth_sso(self):
         payload = self._build_payload({"appkey": self.appkey, "gourl": self.urls["LiveIndex"]})
         self._session.get(self.urls["OAuthSSO"], params=payload)
-        self.logger.info("    获取 Cookies 成功!")
+        self.logger.info("[登录] 获取 Cookies 成功!")
 
     def get_room_info(self):
         payload = self._build_payload()
@@ -240,20 +246,20 @@ class Bilibili:
         try:
             self.uid = data["mid"]
         except KeyError:
-            self.logger.error("    获取个人信息失败, 取消过期礼物清理任务")
+            self.logger.error("[礼物] 获取个人信息失败, 取消过期礼物清理任务")
             return False
-        self.logger.info("    获取个人信息成功, UID: {}".format(self.uid))
+        self.logger.info("[礼物] 获取个人信息成功, UID: {}".format(self.uid))
 
         payload = self._build_payload({'id': self.room_id})
         res = self._session.get(self.urls["roomInfo"], params=payload)
         data = res.json()
         if data.get("code") != 0:
-            self.logger.error("    获取直播间信息失败, 取消过期礼物清理任务")
+            self.logger.error("[礼物] 获取直播间信息失败, 取消过期礼物清理任务")
             return False
         self.room_uid = data.get("data")["uid"]
         self.room_id = data.get("data")["room_id"]
-        self.logger.info("    获取房间信息成功, RoomUID: {}, RoomID {}".format(self.room_uid, self.room_id))
-        self.logger.info("    生成直播间信息成功!")
+        self.logger.info("[礼物] 获取房间信息成功, RoomUID: {}, RoomID {}".format(self.room_uid, self.room_id))
+        self.logger.info("[礼物] 生成直播间信息成功!")
         return True
 
     def list_gift_bag(self):
@@ -261,9 +267,9 @@ class Bilibili:
         res = self._session.get(self.urls["bag_list"], params=payload)
         data = res.json()
         if data.get("code") != 0:
-            self.logger.warning("    查看礼物库存失败")
+            self.logger.warning("[礼物] 查看礼物库存失败")
             return []
-        self.logger.info("    查看礼物库存成功, 共计 {} 件礼物".format(len(data.get("data")["list"])))
+        self.logger.info("[礼物] 查看礼物库存成功, 共计 {} 件礼物".format(len(data.get("data")["list"])))
         return data.get("data")["list"]
 
     def send_gift(self, gift):
@@ -282,31 +288,27 @@ class Bilibili:
         res = self._session.post(self.urls["sendGift"], data=payload)
         data = res.json()
         if data.get("code") != 0:
-            self.logger.warning("    投喂失败, 原因: {}".format(data.get("message")))
+            self.logger.warning("[礼物] 投喂失败, 原因: {}".format(data.get("message")))
             return False
-        self.logger.info("    投喂 {} x {} 到 {} 直播间~".format(gift["gift_name"], gift["gift_num"], self.room_id))
+        self.logger.info("[礼物] 投喂 {} x {} 到 {} 直播间~".format(gift["gift_name"], gift["gift_num"], self.room_id))
         return True
 
     def gift(self):
-        self.logger.info("过期礼物处理模块启动")
         if self.uid == 0 or self.room_uid == 0:
-            self.logger.info("    未检测到个人信息或直播间信息, 尝试生成")
+            self.logger.info("[礼物] 未检测到个人信息或直播间信息, 尝试生成")
             if not self.get_room_info():
-                self.logger.info("退出过期礼物处理模块")
                 return False
 
         gift_list = self.list_gift_bag()
         if len(gift_list) == 0:
-            self.logger.info("退出过期礼物处理模块")
             return True
 
-        self.logger.info("    开始赠送 24 小时内过期礼物")
+        self.logger.info("[礼物] 开始赠送 24 小时内过期礼物")
         for gift in gift_list:
             ts = int(time.time())
             if gift["expire_at"] - ts < 86400:
                 self.send_gift(gift)
-        self.logger.info("    24 小时内过期礼物处理完成")
-        self.logger.info("退出过期礼物处理模块")
+        self.logger.info("[礼物] 24 小时内过期礼物处理完成")
         return True
 
     def get_group_list(self):
@@ -314,9 +316,9 @@ class Bilibili:
         res = self._session.get(self.urls["group_list"], params=payload)
         data = res.json()
         if data.get("code") != 0:
-            self.logger.error("    获取应援团信息失败")
+            self.logger.error("[应援团] 获取应援团信息失败")
             return []
-        self.logger.info("    查询到 {} 个应援团".format(len(data.get("data")["list"])))
+        self.logger.info("[应援团] 查询到 {} 个应援团".format(len(data.get("data")["list"])))
         return data.get("data")["list"]
 
     def group_sign(self, group):
@@ -324,64 +326,192 @@ class Bilibili:
         res = self._session.get(self.urls["group_signin"], params=payload)
         data = res.json()
         if data.get("code") != 0:
-            self.logger.warning("    应援失败, 原因: {}".format(data.get("message")))
+            self.logger.warning("[应援团] 应援失败, 原因: {}".format(data.get("message")))
             return False
         if data.get("data")["status"] == 0:
-            self.logger.info("    {} 应援成功~ 获得 {} 点徽章亲密度".format(group["fans_medal_name"], data.get("data")["add_num"]))
+            self.logger.info("[应援团] {} 应援成功~ 获得 {} 点徽章亲密度".format(group["fans_medal_name"], data.get("data")["add_num"]))
         else:
-            self.logger.info("    {} 今天已经为主播应援了~".format(group["fans_medal_name"]))
+            self.logger.info("[应援团] {} 今天已经为主播应援了~".format(group["fans_medal_name"]))
         return True
 
     def group(self):
-        self.logger.info("应援模块启动")
         group_list = self.get_group_list()
         if len(group_list) == 0:
-            self.logger.info("退出应援模块")
             return True
 
-        self.logger.info("    开始应援")
+        self.logger.info("[应援团] 开始应援")
         for group in group_list:
             self.group_sign(group)
-        self.logger.info("    应援完成")
-        self.logger.info("退出应援模块")
+        self.logger.info("[应援团] 应援完成")
         return True
 
     def silver_to_coin(self):
         if self.sliver2coin == 0:
             return True
 
-        self.logger.info("银瓜子兑换硬币模块启动")
         if self.sliver2coin == 1:
             payload = self._build_payload()
             res = self._session.get(self.urls["sliver2coin_app"], params=payload)
             data = res.json()
             self.logger.info(res.content.decode("u8"))
             if data.get("code") != 0:
-                self.logger.error("    移动端银瓜子兑换硬币失败, 原因: {}".format(data.get("message")))
+                self.logger.error("[兑换] 移动端银瓜子兑换硬币失败, 原因: {}".format(data.get("message")))
             else:
-                self.logger.info("    移动端银瓜子兑换硬币成功, 银瓜子 -700, 硬币 +1")
+                self.logger.info("[兑换] 移动端银瓜子兑换硬币成功, 银瓜子 -700, 硬币 +1")
         else:
             payload = self._build_payload()
             res = self._session.get(self.urls["sliver2coin_web"], params=payload)
             data = res.json()
             self.logger.info(res.content.decode("u8"))
             if data.get("code") != 0:
-                self.logger.error("    网页端银瓜子兑换硬币失败, 原因: {}".format(data.get("message")))
+                self.logger.error("[兑换] 网页端银瓜子兑换硬币失败, 原因: {}".format(data.get("message")))
             else:
-                self.logger.info("    网页端银瓜子兑换硬币成功, 银瓜子 -700, 硬币 +1")
-        self.logger.info("退出银瓜子兑换硬币模块")
+                self.logger.info("[兑换] 网页端银瓜子兑换硬币成功, 银瓜子 -700, 硬币 +1")
 
     def raffle_callback(self, room_id):
-        pass
+        if not self.enable_raffle:
+            return True
+        if random.randint(0, 99) > self.drop_rate:
+            self.logger.info("[抽奖] 随机丢弃直播间 {} 抽奖 x 1".format(room_id))
+            return True
+        real_roomid = self.get_real_roomid(room_id)
+        if not real_roomid:
+            return False
+        self.logger.info("[抽奖] 已进入直播间 {} 准备抽奖".format(real_roomid))
+        payload = self._build_payload({"room_id": real_roomid})
+        self._session.get(self.urls["RoomEntryAction"], params=payload)
+
+        payload = self._build_payload({"roomid": real_roomid})
+        res = self._session.get(self.urls["appRaffleCheck"], params=payload)
+        data = res.json()
+        if data.get("code") != 0:
+            return False
+        if data.get("data")["lotteryInfo"]:
+            self.logger.info(res.json())
+            self.logger.info(
+                "[抽奖] 移动端检测到直播间 {} 出现 {}, 抽奖ID: {}".format(real_roomid, data.get("data")["lotteryinfo"]["title"],
+                                                        data.get("data")["lotteryinfo"]["raffleId"]))
+            self.thread_pool.submit(self.commit_raffle, ("app", real_roomid, data.get("data")["lotteryinfo"]["raffleId"]))
+            return True
+
+        payload = self._build_payload({"roomid": real_roomid})
+        res = self._session.get(self.urls["webRaffleCheck"], params=payload)
+        data = res.json()
+        if data.get("code") != 0:
+            return False
+        if data.get("data")["list"]:
+            for item in data.get("data")["list"]:
+                self.logger.info("[抽奖] 网页端检测到直播间 {} 出现 {}, 抽奖ID: {}, 已加入抽奖队列".format(real_roomid, item["title"], item["raffleId"]))
+                self.thread_pool.submit(self.commit_raffle, ("web", real_roomid, item["raffleId"]))
+            return True
+
+        return True
+
+    def commit_raffle(self, mode, room_id, raffle_id):
+        if mode == "app":
+            time.sleep(random.randint(5, 10))
+            payload = self._build_payload({"event_type": raffle_id, "room_id": room_id})
+            res = self._session.get(self.urls["appRaffleJoin"], params=payload)
+            data = res.json()
+            self.logger.info(data)
+            if data.get("code") != 0:
+                self.logger.warning("[抽奖] 移动端参与直播间 {} 抽奖 {} 失败, 失败原因: {}".format(room_id, raffle_id, data.get("message")))
+                return False
+            # TODO
+            #self.logger.info("[抽奖] 移动端参与直播间 {} 抽奖 {} 成功".format(room_id, raffle_id))
+            #self.query_queue.append((raffle_id, 2))
+            return True
+
+        if mode == "web":
+            time.sleep(random.randint(5, 10))
+            payload = self._build_payload({"raffleId": raffle_id, "roomid": room_id})
+            res = self._session.get(self.urls["webRaffleJoin"], params=payload)
+            data = res.json()
+            if data.get('code') != 0:
+                self.logger.warning("[抽奖] 网页端参与直播间 {} 抽奖 {} 失败, 失败原因: {}".format(room_id, raffle_id, data.get("message")))
+                return False
+            self.logger.info("[抽奖] 网页端参与直播间 {} 抽奖 {} 成功".format(room_id, raffle_id))
+            self.query_queue.append((raffle_id, data.get("data")["type"], time.time()+int(data.get("data")["time"])))
+            if len(self.query_queue) > 10:
+                self.query_raffle()
+            return True
+
+    def query_raffle(self):
+        done = []
+        for record in self.query_queue:
+            if time.time() < record[2]:
+                continue
+            payload = self._build_payload({"type": record[1], "raffleId": record[0]})
+            res = self._session.get(self.urls["RaffleQuery"], params=payload)
+            data = res.json()
+            if data.get("code") != 0:
+                self.logger.warning("[抽奖] 查询抽奖结果失败")
+                continue
+            if data.get("data")["status"] == 3:
+                continue
+            if data.get("data")["status"] == 2:
+                self.logger.info("[抽奖] 网页端在抽奖ID: {} 获得 {} x {}".format(record[0], data.get("data")["gift_name"], data.get("data")["gift_num"]))
+                if data.get("data")["gift_name"] != "辣条" and data.get("data")["gift_name"] != "":
+                    self.logger.info("[抽奖] 抽到了奇怪的东西!!!!!!")
+                    self.server_chan("抽奖获得了奇怪的东西!", "在抽奖{}获得了{}x{},请及时查收".format(record[0], data.get("data")["gift_name"], data.get("data")["gift_num"]))
+                done.append(record)
+        for record in done:
+            self.query_queue.remove(record)
 
     def bullet_screen(self):
-        self.logger.info("弹幕姬启动~")
         self.bullet_screen_client.main.start()
-        time.sleep(60)
-        self.bullet_screen_client.quit()
-        self.logger.info("退出弹幕姬, 下次再见呐~")
+
+    def check_user_info(self):
+        self.logger.info("[抽奖] 正在获取用户信息")
+        payload = self._build_payload()
+        res = self._session.get(self.urls["RealnameCheck"], params=payload)
+        data = res.json()
+        if data.get("code") != 0:
+            self.logger.warning("[抽奖] 检测实名信息失败, 默认无实名")
+        else:
+            if data.get("data")["memberPerson"]["realname"] != "":
+                self.realname = 1
+                self.logger.info("[抽奖] 检测实名信息成功, 用户已完成实名认证")
+            else:
+                self.logger.info("[抽奖] 检测实名信息成功, 用户未完成实名验证")
+        payload = self._build_payload()
+        res = self._session.get(self.urls["vipcheck"], params=payload)
+        data = res.json()
+        if data.get("msg") != "success":
+            self.logger.warning("[抽奖] 检测老爷信息失败, 默认非老爷")
+        else:
+            if data.get("data")["vip"] or data.get("data")["svip"]:
+                self.vip = 1
+            self.logger.info("[抽奖] 检测老爷信息成功")
+            self.uname = data.get("data")["uname"]
+        self.logger.info("[抽奖] 获取用户信息成功")
+
+    def get_real_roomid(self, room_id):
+        payload = {"id": room_id}
+        res = self._session.get(self.urls["getRealRoomID"], params=payload)
+        data = res.json()
+        if data.get("code") != 0:
+            return False
+        if data.get("data")["is_hidden"] or data.get("data")["is_locked"] or data.get("data")["encrypted"]:
+            return False
+        return int(data.get("data")["room_id"])
+
+    def server_chan(self, text, desp=""):
+        if self.SCKEY == "":
+            self.logger.error("[Server酱] 未检测到 SCKEY, 放弃推送任务")
+            return False
+        payload = {"text": text, "desp":desp}
+        res = requests.get("https://sc.ftqq.com/{}.send".format(self.SCKEY), params=payload)
+        data = res.json()
+        if data.get("errno") != 0:
+            self.logger.error("[Server酱] 消息推送失败, 错误原因: {}".format(data.get("errmsg")))
+            return False
+        self.logger.info("[Server酱] 消息推送成功, 标题: {}".format(text))
+        return True
 
     def quit(self):
+        if self.bullet_screen_client.stop == 0:
+            self.bullet_screen_client.quit()
         self.thread_pool.stop()
 
     def test(self):
@@ -407,11 +537,12 @@ class BilibiliBulletScreen:
 
         self.status = 0
         self.hot = 0
-        self.stop = 0
+        self.stop = 1
         self.daemon = threading.Thread(target=self.heart, args=())
         self.main = threading.Thread(target=self.run_forever, args=())
 
     def run_forever(self):
+        self.stop = 0
         self._ws.run_forever(host=self.host, origin=self.origin)
 
     @staticmethod
@@ -421,7 +552,7 @@ class BilibiliBulletScreen:
     def process_msg(self, msg):
         if msg[3] == 3:
             self.hot = int.from_bytes(msg[-1], byteorder='big')
-            self.logger.info("    当前直播间人气: {}".format(self.hot))
+            self.logger.info("[弹幕姬] 当前直播间人气: {}".format(self.hot))
             return True
         if msg[3] == 5:
             data = json.loads(msg[-1].decode("utf-8"))
@@ -434,23 +565,23 @@ class BilibiliBulletScreen:
             if data["cmd"] == "DANMU_MSG":
                 if not self.silent:
                     medal = "" if len(data["info"][3]) == 0 else "[{}] ".format(data["info"][3][1])
-                    self.logger.info("    {}{} 说: {}".format(medal, data["info"][2][1], data["info"][1]))
+                    self.logger.info("[弹幕姬] {}{} 说: {}".format(medal, data["info"][2][1], data["info"][1]))
                 return True
             if data["cmd"] == "SYS_MSG":
                 msg = data["msg"].split(":?")
                 for keyword in self.keywords:
                     if keyword in msg[-1]:
-                        self.logger.info("    系统消息: 检测到 {} 出现 {}".format(data["real_roomid"], keyword))
+                        self.logger.info("[弹幕姬] 系统消息: 检测到 {} 出现 {}".format(data["real_roomid"], keyword))
                         self.raffle_callback(data["real_roomid"])
                 return True
             if data["cmd"] == "SEND_GIFT":
                 if not self.silent:
-                    self.logger.info("    {} 投喂了 {} x {}".format(data["data"]["uname"], data["data"]["giftName"],
+                    self.logger.info("[弹幕姬] {} 投喂了 {} x {}".format(data["data"]["uname"], data["data"]["giftName"],
                                                                  data["data"]["num"]))
                 return True
             return True
         if msg[3] == 8:
-            self.logger.info("    已连接到直播间 {}".format(self.room_id))
+            self.logger.info("[弹幕姬] 已连接到直播间 {}".format(self.room_id))
             self.status = 1
             return True
 
@@ -483,20 +614,20 @@ class BilibiliBulletScreen:
             msg = pkt[-1]
 
     def on_error(self, ws, err):
-        self.logger.error("    错误原因: {}".format(err))
+        self.logger.error("[弹幕姬] 错误原因: {}".format(err))
 
     def on_close(self, ws):
-        self.stop = 1
-        while self.daemon.isAlive():
-            pass
-        self.logger.info("    心跳包已停止发送")
-        self.logger.info("    WebSocket 连接已关闭")
-
-    def quit(self):
+        self.logger.info("[弹幕姬] WebSocket 连接已关闭")
         self.stop = 1
         self.daemon.join()
-        self._ws.close()
-        self.main.join()
+        self.logger.info("[弹幕姬] 心跳包已停止发送")
+
+    def quit(self):
+        if self.stop == 0:
+            self.stop = 1
+            self.daemon.join()
+            self._ws.close()
+            self.main.join()
         return True
 
 
@@ -528,5 +659,4 @@ class ThreadPool:
 
     def stop(self):
         self.run = False
-        while self.daemon.isAlive():
-            pass
+        self.daemon.join()
