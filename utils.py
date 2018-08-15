@@ -47,7 +47,7 @@ class Bilibili:
         self.room_id = self.get_real_roomid(config["USER"]["roomID"])
         if not self.room_id:
             self.room_id = int(config["USER"]["roomID"])
-        self.sliver2coin = int(config["USER"]["sliver2coin"])
+        self.silver2coin = int(config["USER"]["silver2coin"])
         self.raffle_keyword = config["GENERAL"]["raffle_keyword"].split("_")
         self.enable_raffle = int(config["USER"]["enable_raffle"])
         self.drop_rate = int(config["USER"]["drop_rate"])
@@ -69,6 +69,14 @@ class Bilibili:
             True
         )
         self.thread_pool = ThreadPool(5, 10)
+        self.is_sign = False
+        self.is_gift = False
+        self.is_group = False
+        self.is_silver2coin = False
+        self.is_silver = False
+        self.is_task = False
+        self.is_watch = 0
+        self.heart_threading = threading.Thread(target=self.heart, args=())
         self.query_queue = []
 
     def _get_captcha(self, filename=".captcha."):
@@ -129,10 +137,12 @@ class Bilibili:
         res = self._session.get(self.urls["Sign"])
         data = res.json()
         if data["msg"] == "OK":
-            self.logger.info("[每日签到] 签到成功, 获得 {}".format(data["data"]["text"]))
-            return 1
-        self.logger.warning("[每日签到] 签到失败, 原因: {}".format(data.get("message")))
-        return 0
+            self.logger.info("[每日任务] 签到成功, 获得 {}".format(data["data"]["text"]))
+            return True
+        self.logger.warning("[每日任务] 签到失败, 原因: {}".format(data.get("message")))
+        if data.get("message") == "今天已签到过":
+            return True
+        return False
 
     def check_session_status(self):
         res = self._session.get(self.urls["userInfo"])
@@ -274,7 +284,7 @@ class Bilibili:
 
     def send_gift(self, gift):
         raw_payload = {
-            'coin_type': 'sliver',
+            'coin_type': 'silver',
             'gift_id': gift["gift_id"],
             'ruid': self.room_uid,
             'uid': self.uid,
@@ -294,6 +304,9 @@ class Bilibili:
         return True
 
     def gift(self):
+        if self.is_gift:
+            return True
+
         if self.uid == 0 or self.room_uid == 0:
             self.logger.info("[礼物] 未检测到个人信息或直播间信息, 尝试生成")
             if not self.get_room_info():
@@ -309,6 +322,7 @@ class Bilibili:
             if gift["expire_at"] - ts < 86400:
                 self.send_gift(gift)
         self.logger.info("[礼物] 24 小时内过期礼物处理完成")
+        self.is_gift = True
         return True
 
     def get_group_list(self):
@@ -337,36 +351,43 @@ class Bilibili:
     def group(self):
         group_list = self.get_group_list()
         if len(group_list) == 0:
+            self.is_group = True
             return True
 
         self.logger.info("[应援团] 开始应援")
         for group in group_list:
             self.group_sign(group)
         self.logger.info("[应援团] 应援完成")
+        self.is_group = True
         return True
 
     def silver_to_coin(self):
-        if self.sliver2coin == 0:
+        if self.is_silver2coin:
             return True
 
-        if self.sliver2coin == 1:
+        if self.silver2coin == 0:
+            return True
+
+        if self.silver2coin == 1:
             payload = self._build_payload()
-            res = self._session.get(self.urls["sliver2coin_app"], params=payload)
+            res = self._session.get(self.urls["silver2coin_app"], params=payload)
             data = res.json()
             self.logger.info(res.content.decode("u8"))
             if data.get("code") != 0:
                 self.logger.error("[兑换] 移动端银瓜子兑换硬币失败, 原因: {}".format(data.get("message")))
             else:
                 self.logger.info("[兑换] 移动端银瓜子兑换硬币成功, 银瓜子 -700, 硬币 +1")
+                self.is_silver2coin = True
         else:
             payload = self._build_payload()
-            res = self._session.get(self.urls["sliver2coin_web"], params=payload)
+            res = self._session.get(self.urls["silver2coin_web"], params=payload)
             data = res.json()
             self.logger.info(res.content.decode("u8"))
             if data.get("code") != 0:
                 self.logger.error("[兑换] 网页端银瓜子兑换硬币失败, 原因: {}".format(data.get("message")))
             else:
                 self.logger.info("[兑换] 网页端银瓜子兑换硬币成功, 银瓜子 -700, 硬币 +1")
+                self.is_silver2coin = True
 
     def raffle_callback(self, room_id):
         if not self.enable_raffle:
@@ -432,14 +453,14 @@ class Bilibili:
                 return False
             self.logger.info("[抽奖] 网页端参与直播间 {} 抽奖 {} 成功".format(room_id, raffle_id))
             self.query_queue.append((raffle_id, data.get("data")["type"], time.time()+int(data.get("data")["time"])))
-            if len(self.query_queue) > 10:
-                self.query_raffle()
+            self.query_raffle()
             return True
 
     def query_raffle(self):
         done = []
         for record in self.query_queue:
             if time.time() < record[2]:
+                print("skip")
                 continue
             payload = self._build_payload({"type": record[1], "raffleId": record[0]})
             res = self._session.get(self.urls["RaffleQuery"], params=payload)
@@ -509,7 +530,98 @@ class Bilibili:
         self.logger.info("[Server酱] 消息推送成功, 标题: {}".format(text))
         return True
 
+    def task(self):
+        if not self.is_task:
+            payload = self._build_payload()
+            res = self._session.get(self.urls["check_task"], params=payload)
+            data = res.json()
+            if data.get("code") != 0:
+                self.logger.warning("[每日任务] 每日任务检查失败")
+                return False
+            if data.get("data")["sign_info"]["status"] == 1:
+                self.logger.info("[每日任务] 每日签到任务已完成")
+                self.is_sign = True
+            if data.get("data")["double_watch_info"]["status"] == 1:
+                self.logger.info("[每日任务] 双端观看任务已完成")
+                self.is_watch = 1
+            if data.get("data")["double_watch_info"]["status"] == 2:
+                self.logger.info("[每日任务] 双端观看任务已完成")
+                self.is_watch = 2
+            if data.get("data")["box_info"]["freeSilverFinish"]:
+                self.logger.info("[每日任务] 今日免费银瓜子已全部领取完毕")
+                self.is_silver = 1
+            self.is_task = self.is_sign and self.is_silver and self.is_watch
+            self.logger.info("[每日任务] 每日任务检查成功")
+        else:
+            self.logger.info("[每日任务] 今日任务已全部完成 (不包括直播任务)")
+            return True
+
+        if not self.is_sign:
+            if self.sign():
+                self.is_sign = True
+
+        if not (self.is_silver and self.is_watch):
+            if not self.heart_threading.isAlive():
+                self.heart_threading.start()
+
+        if self.is_watch == 1:
+            payload = self._build_payload({"task_id": "double_watch_task"})
+            res = self._session.post(self.urls["taskreward"], payload)
+            data = res.json()
+            if data.get("code") != 0:
+                self.logger.warning("[每日任务] 双端观看任务奖励领取失败, 原因: {}".format(data.get("message")))
+            else:
+                self.logger.info("[每日任务] 双端观看任务奖励领取成功")
+
+    def heart(self):
+        while not (self.is_silver and self.is_watch):
+            payload = self._build_payload({"room_id": self.room_id})
+            res = self._session.post(self.urls["webHeart"], data=payload)
+            data = res.json()
+            if data.get("code") != 0:
+                self.logger.warning("[心跳] 网页端直播间心跳包异常")
+            else:
+                self.logger.info("[心跳] 网页端心跳正常")
+
+            payload = self._build_payload({"room_id": self.room_id})
+            res = self._session.post(self.urls["appHeart"], data=payload)
+            data = res.json()
+            if data.get("code") != 0:
+                self.logger.warning("[心跳] 移动端直播间心跳包异常")
+            else:
+                self.logger.info("[心跳] 移动端心跳正常")
+            self.silver()
+            time.sleep(300)
+
+    def silver(self):
+        payload = self._build_payload()
+        res = self._session.get(self.urls["silverQuery"], params=payload)
+        data = res.json()
+        if data.get("code") != 0:
+            if data.get("code") == -10017:
+                self.is_silver = 1
+                self.logger.info("[免费宝箱] 今日宝箱已领取完毕")
+            else:
+                self.logger.info("[免费宝箱] 宝箱状态查询失败, 原因: {}".format(data.get("message")))
+            return True
+        if time.time() < data.get("data")["time_end"]:
+            return False
+        now = data.get("data")["times"]
+        total = data.get("data")["max_times"]
+        payload = self._build_payload()
+        res = self._session.get(self.urls["silverClaim"], params=payload)
+        data = res.json()
+        if data.get('code') != 0:
+            self.logger.warning("[免费宝箱] 宝箱领取失败, 原因: {}".format(data.get("message")))
+            return False
+        self.logger.info("[免费宝箱] {} / {} 轮宝箱领取成功, 获得 银瓜子 x {}".format(now, total, data.get("data")["awardSilver"]))
+        return True
+
     def quit(self):
+        self.is_silver = True
+        self.is_watch = 2
+        if self.heart_threading.isAlive():
+            self.heart_threading.join()
         if self.bullet_screen_client.stop == 0:
             self.bullet_screen_client.quit()
         self.thread_pool.stop()
