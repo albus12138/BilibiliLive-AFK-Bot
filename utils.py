@@ -480,7 +480,8 @@ class Bilibili:
             self.query_queue.remove(record)
 
     def bullet_screen(self):
-        self.bullet_screen_client.main.start()
+        if not self.bullet_screen_client.main.isAlive():
+            self.bullet_screen_client.main.start()
 
     def check_user_info(self):
         self.logger.info("[抽奖] 正在获取用户信息")
@@ -562,6 +563,7 @@ class Bilibili:
 
         if not (self.is_silver and self.is_watch):
             if not self.heart_threading.isAlive():
+                self.heart_threading.setDaemon(True)
                 self.heart_threading.start()
 
         if self.is_watch == 1:
@@ -618,18 +620,9 @@ class Bilibili:
         return True
 
     def quit(self):
-        self.is_silver = True
-        self.is_watch = 2
-        if self.heart_threading.isAlive():
-            self.heart_threading.join()
         if self.bullet_screen_client.stop == 0:
             self.bullet_screen_client.quit()
         self.thread_pool.stop()
-
-    def test(self):
-        payload = self._build_payload({"group_id": 221033522, "owner_id": 372418})
-        res = self._session.get(self.urls["group_signin"], params=payload)
-        self.logger.info(res.content.decode('u8'))
 
 
 class BilibiliBulletScreen:
@@ -716,6 +709,7 @@ class BilibiliBulletScreen:
         }
         data = self.pack_msg(json.dumps(raw_payload), 0x7)
         self._ws.send(data)
+        self.daemon.setDaemon(True)
         self.daemon.start()
 
     def on_message(self, ws, msg):
@@ -737,7 +731,6 @@ class BilibiliBulletScreen:
     def quit(self):
         if self.stop == 0:
             self.stop = 1
-            self.daemon.join()
             self._ws.close()
             self.main.join()
         return True

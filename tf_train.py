@@ -10,7 +10,6 @@ import tensorflow as tf
 from skimage import io
 
 
-
 HEIGHT = 40
 WIDTH = 120
 CAPTCHA_LENGTH = 4
