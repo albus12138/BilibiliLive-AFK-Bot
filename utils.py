@@ -661,12 +661,6 @@ class BilibiliBulletScreen:
             return True
         if msg[3] == 5:
             data = json.loads(msg[-1].decode("utf-8"))
-            ####  DEBUG  ####
-            import os
-            if not os.path.exists("json_data/danmu/{}.json".format(data["cmd"])):
-                with open("json_data/danmu/{}.json".format(data["cmd"]), 'w') as wfile:
-                    wfile.write(str(data))
-            ####  DEBUG  ####
             if data["cmd"] == "DANMU_MSG":
                 if not self.silent:
                     medal = "" if len(data["info"][3]) == 0 else "[{}] ".format(data["info"][3][1])
