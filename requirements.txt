@@ -1,0 +1,10 @@
+Pillow==5.2.0
+beautifulsoup4==4.6.3
+bs4==0.0.1
+coloredlogs==10.0
+pycrypto==2.6.1
+requests==2.19.1
+scikit-image==0.14.0
+selenium==3.14.0
+tensorflow==1.10.0
+websocket-client==0.49.0
