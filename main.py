@@ -26,14 +26,14 @@ def in_time(time_list):
 
 def run():
     while (today == datetime.datetime.now().day) and keep_running:
-        client.task()
-        client.gift()
-        client.group()
-        client.silver_to_coin()
         if in_time(schedule):
             client.bullet_screen()
         else:
             client.bullet_screen_client.quit()
+        client.task()
+        client.gift()
+        client.group()
+        client.silver_to_coin()
         time.sleep(60)
     client.quit()
 

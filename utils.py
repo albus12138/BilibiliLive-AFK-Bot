@@ -66,7 +66,7 @@ class Bilibili:
             self.logger,
             self.raffle_keyword,
             self.raffle_callback,
-            True
+            False
         )
         self.thread_pool = ThreadPool(5, 10)
         self.is_sign = False
@@ -372,7 +372,6 @@ class Bilibili:
             payload = self._build_payload()
             res = self._session.get(self.urls["silver2coin_app"], params=payload)
             data = res.json()
-            self.logger.info(res.content.decode("u8"))
             if data.get("code") != 0:
                 self.logger.error("[兑换] 移动端银瓜子兑换硬币失败, 原因: {}".format(data.get("message")))
             else:
@@ -382,7 +381,6 @@ class Bilibili:
             payload = self._build_payload()
             res = self._session.get(self.urls["silver2coin_web"], params=payload)
             data = res.json()
-            self.logger.info(res.content.decode("u8"))
             if data.get("code") != 0:
                 self.logger.error("[兑换] 网页端银瓜子兑换硬币失败, 原因: {}".format(data.get("message")))
             else:
@@ -480,7 +478,8 @@ class Bilibili:
             self.query_queue.remove(record)
 
     def bullet_screen(self):
-        if not self.bullet_screen_client.main.isAlive():
+        if self.bullet_screen_client.stop:
+            print(self.bullet_screen_client.main.isAlive())
             self.bullet_screen_client.main.start()
 
     def check_user_info(self):
@@ -620,13 +619,16 @@ class Bilibili:
         return True
 
     def quit(self):
+        self.is_silver = True
+        self.is_watch = 2
         if self.bullet_screen_client.stop == 0:
             self.bullet_screen_client.quit()
         self.thread_pool.stop()
 
 
-class BilibiliBulletScreen:
+class BilibiliBulletScreen(websocket.WebSocketApp):
     def __init__(self, host, origin, room_id, logger, keyword, raffle_callback, silent=True):
+        super().__init__(host)
         self.host = host
         self.origin = origin
         self.room_id = int(room_id)
@@ -634,21 +636,11 @@ class BilibiliBulletScreen:
         self.keywords = keyword
         self.raffle_callback = raffle_callback
         self.silent = silent
-        self._ws = websocket.WebSocketApp(host,
-                                          on_message=self.on_message,
-                                          on_error=self.on_error,
-                                          on_open=self.on_open,
-                                          on_close=self.on_close)
-
         self.status = 0
         self.hot = 0
         self.stop = 1
         self.daemon = threading.Thread(target=self.heart, args=())
-        self.main = threading.Thread(target=self.run_forever, args=())
-
-    def run_forever(self):
-        self.stop = 0
-        self._ws.run_forever(host=self.host, origin=self.origin)
+        self.main = threading.Thread(target=self.run_forever, args=(None, None, 0, None, None, None, None, None, False, self.host, self.origin, None, False))
 
     @staticmethod
     def pack_msg(payload, opt):
@@ -690,10 +682,11 @@ class BilibiliBulletScreen:
 
         while not self.stop:
             data = self.pack_msg("", 0x2)
-            self._ws.send(data)
+            self.send(data)
             time.sleep(30)
 
-    def on_open(self, ws):
+    def on_open(self):
+        self.stop = 0
         raw_payload = {
             'uid': 0,
             'roomid': self.room_id,
@@ -702,21 +695,21 @@ class BilibiliBulletScreen:
             'clientver': '1.4.1'
         }
         data = self.pack_msg(json.dumps(raw_payload), 0x7)
-        self._ws.send(data)
+        self.send(data)
         self.daemon.setDaemon(True)
         self.daemon.start()
 
-    def on_message(self, ws, msg):
+    def on_message(self, msg):
         while len(msg) != 0:
             pkt_length = int.from_bytes(msg[:4], byteorder='big')
             pkt = struct.unpack(">IHHII{}s{}s".format(pkt_length-16, len(msg)-pkt_length), msg)
             self.process_msg(pkt[:-1])
             msg = pkt[-1]
 
-    def on_error(self, ws, err):
+    def on_error(self, err):
         self.logger.error("[弹幕姬] 错误原因: {}".format(err))
 
-    def on_close(self, ws):
+    def on_close(self):
         self.logger.info("[弹幕姬] WebSocket 连接已关闭")
         self.stop = 1
         self.daemon.join()
@@ -725,7 +718,7 @@ class BilibiliBulletScreen:
     def quit(self):
         if self.stop == 0:
             self.stop = 1
-            self._ws.close()
+            self.close()
             self.main.join()
         return True
 
