@@ -52,6 +52,7 @@ class Bilibili:
         self.enable_raffle = int(config["USER"]["enable_raffle"])
         self.drop_rate = int(config["USER"]["drop_rate"])
         self.SCKEY = config["USER"]["SCKEY"]
+        self.silent = config["USER"]["silent"]
         self.logger.info("[主线程] 配置文件载入完成")
 
         self.uid = 0
@@ -66,7 +67,7 @@ class Bilibili:
             self.logger,
             self.raffle_keyword,
             self.raffle_callback,
-            False
+            self.silent
         )
         self.thread_pool = ThreadPool(5, 10)
         self.is_sign = False
@@ -349,6 +350,9 @@ class Bilibili:
         return True
 
     def group(self):
+        if self.is_group:
+            return True
+
         group_list = self.get_group_list()
         if len(group_list) == 0:
             self.is_group = True
@@ -458,7 +462,6 @@ class Bilibili:
         done = []
         for record in self.query_queue:
             if time.time() < record[2]:
-                print("skip")
                 continue
             payload = self._build_payload({"type": record[1], "raffleId": record[0]})
             res = self._session.get(self.urls["RaffleQuery"], params=payload)
@@ -479,7 +482,6 @@ class Bilibili:
 
     def bullet_screen(self):
         if self.bullet_screen_client.stop:
-            print(self.bullet_screen_client.main.isAlive())
             self.bullet_screen_client.main.start()
 
     def check_user_info(self):
